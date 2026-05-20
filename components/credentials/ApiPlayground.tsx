@@ -14,7 +14,13 @@ import type { DiagnosticAsset } from '@/types';
 
 type ServiceType = 'dpdns' | 'cloudflare';
 
-export function ApiPlayground() {
+export function ApiPlayground({
+  defaultAccountId,
+  onClearDefaultAccountId,
+}: {
+  defaultAccountId?: string;
+  onClearDefaultAccountId?: () => void;
+}) {
   const user = useAppStore((state) => state.user);
   const accounts = useAppStore((state) => state.accounts);
   const { notifySuccess, notifyError } = useFloatMessage();
@@ -54,6 +60,29 @@ export function ApiPlayground() {
     if (!user) return;
     return FirebaseService.subscribeDiagnosticAssets(user.uid, setSavedAssets);
   }, [user]);
+
+  // Handle defaultAccountId prop from parent component
+  useEffect(() => {
+    if (defaultAccountId) {
+      setSelectedAccountId(defaultAccountId);
+      if (onClearDefaultAccountId) {
+        onClearDefaultAccountId();
+      }
+    }
+  }, [defaultAccountId, onClearDefaultAccountId]);
+
+  // Auto-switch Target Service tab based on active account features
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    const acc = accounts.find((a) => a.id === selectedAccountId);
+    if (acc) {
+      if (acc.dpdnsToken && !acc.cloudflareApiKey) {
+        setSelectedService('dpdns');
+      } else if (acc.cloudflareApiKey && !acc.dpdnsToken) {
+        setSelectedService('cloudflare');
+      }
+    }
+  }, [selectedAccountId, accounts]);
 
   // Handle Account change - auto select first API when service changes
   useEffect(() => {

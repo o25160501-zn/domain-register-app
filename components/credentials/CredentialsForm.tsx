@@ -1,7 +1,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CheckCircle2, ShieldAlert, XCircle, Plus, Pencil, Trash2, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, ShieldAlert, XCircle, Plus, Pencil, Trash2, ArrowLeft, Play } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { useState } from 'react';
 import { useFloatMessage } from '@/components/feedback/FloatMessageProvider';
@@ -15,8 +15,13 @@ import { CredentialsService } from '@/services/credentials.service';
 import { DPDNSService } from '@/services/dpdns.service';
 import { useAppStore } from '@/stores/app.store';
 import type { DecryptedCredentialAccount } from '@/types';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
-export function CredentialsForm() {
+export function CredentialsForm({
+  onOpenPlayground,
+}: {
+  onOpenPlayground?: (accountId: string) => void;
+}) {
   const user = useAppStore((state) => state.user);
   const accounts = useAppStore((state) => state.accounts);
   const setAccounts = useAppStore((state) => state.setAccounts);
@@ -156,9 +161,13 @@ export function CredentialsForm() {
     }
   };
 
+  const [confirmDelete, setConfirmDelete] = useState<{
+    open: boolean;
+    accountId: string;
+  }>({ open: false, accountId: '' });
+
   const deleteAccount = async (accountId: string) => {
     if (!user) return;
-    if (!confirm('Are you sure you want to delete this account configuration? This will not affect registered domains, but you will not be able to manage them unless another account is selected.')) return;
     try {
       await CredentialsService.delete(user.uid, accountId);
       const updated = await CredentialsService.load(user.uid);
@@ -180,6 +189,25 @@ export function CredentialsForm() {
             <Plus className="mr-2 h-4 w-4" /> Add Account
           </Button>
         </div>
+
+        {user && (
+          <div className="flex items-center justify-between rounded-xl border border-hairline bg-surface-soft p-4 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-ink">Your User ID (UID) for API Testing:</span>
+              <code className="rounded bg-canvas px-2 py-1 font-mono text-primary select-all">{user.uid}</code>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(user.uid);
+                notifySuccess('Copy UID', 'User ID copied to clipboard.');
+              }}
+              className="text-[10px] font-semibold uppercase tracking-wider text-primary hover:underline"
+            >
+              Copy UID
+            </button>
+          </div>
+        )}
 
         {accounts.length === 0 ? (
           <div className="feature-card py-12 text-center">
@@ -212,10 +240,21 @@ export function CredentialsForm() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {onOpenPlayground && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => onOpenPlayground(acc.id)}
+                      title="Open this account in API Playground"
+                    >
+                      <Play className="h-3.5 w-3.5 mr-1" /> Playground
+                    </Button>
+                  )}
                   <Button variant="ghost" size="icon" onClick={() => enterEditMode(acc)} aria-label="Edit account" title="Edit account">
                     <Pencil className="h-4 w-4 text-body hover:text-ink" />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => deleteAccount(acc.id)} aria-label="Delete account" title="Delete account">
+                  <Button variant="ghost" size="icon" onClick={() => setConfirmDelete({ open: true, accountId: acc.id })} aria-label="Delete account" title="Delete account">
                     <Trash2 className="h-4 w-4 text-semantic-down" />
                   </Button>
                 </div>
@@ -223,6 +262,16 @@ export function CredentialsForm() {
             ))}
           </div>
         )}
+
+        <ConfirmDialog
+          open={confirmDelete.open}
+          onOpenChange={(open) => setConfirmDelete((prev) => ({ ...prev, open }))}
+          title="Delete Account Credentials"
+          description="Are you sure you want to delete this account configuration? This will not affect registered domains, but you will not be able to manage them unless another account is selected."
+          variant="danger"
+          confirmLabel="Delete"
+          onConfirm={() => deleteAccount(confirmDelete.accountId)}
+        />
       </div>
     );
   }

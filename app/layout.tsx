@@ -23,14 +23,17 @@ export const viewport: Viewport = {
   themeColor: '#0052ff',
 };
 
+import { DeployBar } from '@/components/DeployBar';
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="vi">
-      <body>
+      <body className="pb-9">
         <FloatMessageProvider>
           <AuthProvider>
             <PWARegistration />
             {children}
+            <DeployBar />
           </AuthProvider>
         </FloatMessageProvider>
       </body>

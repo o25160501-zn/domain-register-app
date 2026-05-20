@@ -3,10 +3,12 @@
 import { useState } from 'react';
 import { CredentialsForm } from '@/components/credentials/CredentialsForm';
 import { ApiPlayground } from '@/components/credentials/ApiPlayground';
+import { BackendLogs } from '@/components/credentials/BackendLogs';
 import { ProtectedPage } from '@/components/layout/ProtectedPage';
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'diagnostics'>('credentials');
+  const [activeTab, setActiveTab] = useState<'credentials' | 'diagnostics' | 'logs'>('credentials');
+  const [playgroundAccountId, setPlaygroundAccountId] = useState<string | null>(null);
 
   return (
     <ProtectedPage>
@@ -15,18 +17,24 @@ export default function SettingsPage() {
           <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-primary">Settings</p>
             <h1 className="mt-2 text-4xl font-semibold tracking-tight text-ink">
-              {activeTab === 'credentials' ? 'Credentials' : 'API Playground'}
+              {activeTab === 'credentials' 
+                ? 'Credentials' 
+                : activeTab === 'diagnostics' 
+                ? 'API Playground' 
+                : 'Backend System Logs'}
             </h1>
             <p className="mt-2 max-w-2xl text-body">
               {activeTab === 'credentials'
                 ? 'Store DPDNS and Cloudflare credentials encrypted in Firebase Realtime Database.'
-                : 'Directly execute API requests for DPDNS and Cloudflare, extract tokens, and save diagnostic assets.'}
+                : activeTab === 'diagnostics'
+                ? 'Directly execute API requests for DPDNS and Cloudflare, extract tokens, and save diagnostic assets.'
+                : 'Monitor daily backend API activities, system events, and manage audit logs.'}
             </p>
           </div>
         </div>
 
         {/* Coinbase-style Tabs */}
-        <div className="mb-8 flex rounded-xl border border-hairline bg-surface-soft p-1 max-w-md">
+        <div className="mb-8 flex rounded-xl border border-hairline bg-surface-soft p-1 max-w-xl">
           <button
             type="button"
             className={`flex-1 rounded-lg py-2.5 text-center text-sm font-semibold transition-all ${
@@ -49,10 +57,36 @@ export default function SettingsPage() {
           >
             API Playground
           </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-lg py-2.5 text-center text-sm font-semibold transition-all ${
+              activeTab === 'logs'
+                ? 'bg-white text-ink shadow-sm'
+                : 'text-body hover:text-ink'
+            }`}
+            onClick={() => setActiveTab('logs')}
+          >
+            Backend Logs
+          </button>
         </div>
 
-        {activeTab === 'credentials' ? <CredentialsForm /> : <ApiPlayground />}
+        {activeTab === 'credentials' ? (
+          <CredentialsForm
+            onOpenPlayground={(accountId) => {
+              setPlaygroundAccountId(accountId);
+              setActiveTab('diagnostics');
+            }}
+          />
+        ) : activeTab === 'diagnostics' ? (
+          <ApiPlayground
+            defaultAccountId={playgroundAccountId || undefined}
+            onClearDefaultAccountId={() => setPlaygroundAccountId(null)}
+          />
+        ) : (
+          <BackendLogs />
+        )}
       </div>
     </ProtectedPage>
   );
 }
+

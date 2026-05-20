@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { CredentialsService } from '@/services/credentials.service';
-import { db } from '@/lib/firebase';
-import { ref as dbRef, set } from 'firebase/database';
+import { decrypt, encrypt } from '@/lib/crypto';
+import { firebaseAdminFetch } from '@/lib/firebase-admin';
+import type { DecryptedCredentialAccount, EncryptedCredentialAccount } from '@/types';
 
+// 1. Hàm ghi daily log dùng Firebase Admin REST API
 async function writeDailyLog(
   action: string,
   status: 'success' | 'failed',
@@ -11,16 +12,100 @@ async function writeDailyLog(
   try {
     const today = new Date().toISOString().split('T')[0];
     const timestamp = Date.now();
-    const logRef = dbRef(db, `logs/${today}/${timestamp}`);
-    await set(logRef, {
-      action,
-      status,
-      timestamp,
-      ...details,
+    await firebaseAdminFetch(`logs/${today}/${timestamp}.json`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        action,
+        status,
+        timestamp,
+        ...details,
+      }),
     });
   } catch (logError) {
-    console.error('Failed to write daily log to Firebase:', logError);
+    console.error('Failed to write daily log via Firebase Admin:', logError);
   }
+}
+
+// 2. Hàm đọc các tài khoản dùng Firebase Admin REST API
+async function getAdminCredentialAccounts(uid: string): Promise<DecryptedCredentialAccount[]> {
+  const encryptedAccounts: Record<string, EncryptedCredentialAccount> | null = await firebaseAdminFetch(
+    `users/${uid}/settings/accounts.json`
+  );
+
+  if (!encryptedAccounts) return [];
+
+  return Object.values(encryptedAccounts).map((acc) => {
+    let dpdnsToken = '';
+    let cloudflareApiKey = '';
+    
+    try {
+      dpdnsToken = decrypt(acc.dpdns.token, uid);
+    } catch (e) {
+      console.error('Failed to decrypt DPDNS token for account', acc.id, e);
+    }
+    
+    try {
+      cloudflareApiKey = decrypt(acc.cloudflare.api_key, uid);
+    } catch (e) {
+      console.error('Failed to decrypt Cloudflare API key for account', acc.id, e);
+    }
+    
+    return {
+      id: acc.id,
+      name: acc.name || 'Unnamed Account',
+      dpdnsToken,
+      cloudflareEmail: acc.cloudflare.email,
+      cloudflareApiKey,
+      cloudflareAccountId: acc.cloudflare.account_id,
+      dpdnsVerified: acc.dpdns.verified,
+      cloudflareVerified: acc.cloudflare.verified,
+      created_at: acc.created_at || Date.now(),
+      updated_at: acc.updated_at || Date.now(),
+    };
+  });
+}
+
+// 3. Hàm lưu tài khoản dùng Firebase Admin REST API
+async function saveAdminCredentialAccount(
+  uid: string,
+  account: Omit<DecryptedCredentialAccount, 'created_at' | 'updated_at'> & { created_at?: number },
+  verification: { dpdns: boolean; cloudflare: boolean }
+): Promise<string> {
+  const now = Date.now();
+  const id = account.id || `acc_${Math.random().toString(36).substring(2, 11)}`;
+  
+  const encrypted: EncryptedCredentialAccount = {
+    id,
+    name: account.name || 'Default Account',
+    dpdns: {
+      token: encrypt(account.dpdnsToken, uid),
+      verified: verification.dpdns,
+      verified_at: now,
+    },
+    cloudflare: {
+      email: account.cloudflareEmail,
+      api_key: encrypt(account.cloudflareApiKey, uid),
+      account_id: account.cloudflareAccountId,
+      verified: verification.cloudflare,
+      verified_at: now,
+    },
+    created_at: account.created_at || now,
+    updated_at: now,
+  };
+  
+  // Lưu tài khoản
+  await firebaseAdminFetch(`users/${uid}/settings/accounts/${id}.json`, {
+    method: 'PUT',
+    body: JSON.stringify(encrypted),
+  });
+  
+  // Cập nhật timestamp cài đặt
+  await firebaseAdminFetch(`users/${uid}/settings.json`, {
+    method: 'PATCH',
+    body: JSON.stringify({ updated_at: now }),
+  });
+
+  return id;
 }
 
 export async function POST(request: Request) {
@@ -91,8 +176,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    // 4. Load existing user accounts
-    const existingAccounts = await CredentialsService.load(userId);
+    // 4. Load existing user accounts bằng Firebase Admin API
+    const existingAccounts = await getAdminCredentialAccounts(userId);
     const existing = existingAccounts.find(
       (acc) => acc.cloudflareEmail?.toLowerCase() === email.toLowerCase()
     );
@@ -107,7 +192,7 @@ export async function POST(request: Request) {
         if (!token) {
           return NextResponse.json({ error: 'Missing DPDNS token.' }, { status: 400 });
         }
-        await CredentialsService.save(
+        await saveAdminCredentialAccount(
           userId,
           {
             ...existing,
@@ -124,7 +209,7 @@ export async function POST(request: Request) {
         if (!apiKey || !accountId) {
           return NextResponse.json({ error: 'Missing Cloudflare apiKey or accountId.' }, { status: 400 });
         }
-        await CredentialsService.save(
+        await saveAdminCredentialAccount(
           userId,
           {
             ...existing,
@@ -145,7 +230,7 @@ export async function POST(request: Request) {
         if (!token) {
           return NextResponse.json({ error: 'Missing DPDNS token.' }, { status: 400 });
         }
-        resultId = await CredentialsService.save(
+        resultId = await saveAdminCredentialAccount(
           userId,
           {
             id: '',
@@ -167,7 +252,7 @@ export async function POST(request: Request) {
         if (!apiKey || !accountId) {
           return NextResponse.json({ error: 'Missing Cloudflare apiKey or accountId.' }, { status: 400 });
         }
-        resultId = await CredentialsService.save(
+        resultId = await saveAdminCredentialAccount(
           userId,
           {
             id: '',
