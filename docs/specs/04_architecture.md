@@ -1,0 +1,209 @@
+# Section 4 — System Architecture
+> **Updated:** Bỏ version pin trên tất cả thư viện (dùng latest). Thêm CORS Proxy layer vào kiến trúc.
+
+---
+
+## 4.1 Kiến trúc tổng thể
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        BROWSER (Client)                               │
+│                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                    Next.js App (App Router)                      │  │
+│  │                                                                   │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │  │
+│  │  │  UI Layer    │  │    Zustand   │  │  Next.js App Router  │   │  │
+│  │  │  Components  │  │    Store     │  │  (pages + API routes)│   │  │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────────────────────┘   │  │
+│  │         │                 │                                        │  │
+│  │  ┌──────▼─────────────────▼──────────────────────────────────┐   │  │
+│  │  │                   Service Layer                            │   │  │
+│  │  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐   │   │  │
+│  │  │  │ dpdns.service│  │  cf.service  │  │firebase.svc   │   │   │  │
+│  │  │  │(dual-path)   │  │ (dual-path)  │  │(Realtime DB)  │   │   │  │
+│  │  │  └──────┬───────┘  └──────┬───────┘  └───────┬───────┘   │   │  │
+│  │  └─────────┼─────────────────┼──────────────────┼────────────┘   │  │
+│  └────────────┼─────────────────┼──────────────────┼────────────────┘  │
+│               │ [direct fetch]  │ [direct fetch]   │                    │
+│               │ or CORS error ↓ │ or CORS error ↓  │                    │
+└───────────────┼─────────────────┼──────────────────┼───────────────────┘
+                │                 │                  │
+┌───────────────▼─────────────────▼──────────────────┼───────────────────┐
+│              Next.js API Routes  (Server-side proxy)│                   │
+│                                                     │                   │
+│  /api/proxy/dpdns         /api/proxy/cloudflare     │                   │
+│  (no CORS, server fetch)  (no CORS, server fetch)   │                   │
+└───────────────┬─────────────────┬──────────────────┼───────────────────┘
+                │                 │                  │
+     ┌──────────▼──┐   ┌──────────▼──┐   ┌──────────▼─────────────┐
+     │  DigitalPlat│   │  Cloudflare │   │  Firebase Realtime DB  │
+     │  Domain API │   │  API v4     │   │  (Google Cloud)        │
+     │(domain-api. │   │             │   │                        │
+     │digitalplat) │   │             │   │                        │
+     └─────────────┘   └─────────────┘   └────────────────────────┘
+```
+
+---
+
+## 4.2 Component Breakdown
+
+### 4.2.1 UI Layer — Pages & Components
+
+| Component | Mô tả |
+|-----------|-------|
+| `SettingsPage` | Cấu hình API credentials (DPDNS Token, Cloudflare Key + Email) |
+| `DashboardPage` | Trang chính: danh sách domain realtime + "Register New Domain" CTA |
+| `RegisterModal` | Modal đăng ký domain, step indicator 3 bước |
+| `DomainCard` / `DomainRow` | Component 1 domain — Coinbase asset-row style |
+| `EditDomainModal` | Sửa nameserver + notes |
+| `ConfirmDeleteDialog` | Dialog xác nhận xoá, hiển thị cảnh báo `pendingdelete` 7 ngày |
+| `CredentialsForm` | Form nhập/cập nhật credentials có masking |
+| `StepIndicator` | 3-bước progress visual (Cloudflare → NS → DPDNS) |
+| `StatusBadge` | Badge pill: `ok` (xanh), `pendingdelete` (đỏ), `pending` (vàng) |
+
+### 4.2.2 Service Layer
+
+| Service | File | Nhiệm vụ |
+|---------|------|---------|
+| `DPDNSService` | `services/dpdns.service.ts` | List, register, update NS, delete — dual-path |
+| `CloudflareService` | `services/cloudflare.service.ts` | Create zone, get NS, delete zone — dual-path |
+| `FirebaseService` | `services/firebase.service.ts` | CRUD domain records, credentials, realtime listener |
+| `ApiCaller` | `services/api-caller.ts` | Dual-path fetch wrapper (direct → proxy fallback) |
+| `CredentialsService` | `services/credentials.service.ts` | Đọc/ghi/mã hoá credentials |
+
+### 4.2.3 Next.js API Routes (CORS Proxy)
+
+| Route | File | Proxy đến |
+|-------|------|-----------|
+| `POST /api/proxy/dpdns` | `app/api/proxy/dpdns/route.ts` | `domain-api.digitalplat.org` |
+| `POST /api/proxy/cloudflare` | `app/api/proxy/cloudflare/route.ts` | `api.cloudflare.com` |
+
+---
+
+## 4.3 Data Flow — Luồng đăng ký domain
+
+```
+User bấm "Register"
+       │
+       ▼
+[1] Đọc credentials từ Firebase (decrypt)
+       │
+       ▼
+[2] Validate: DPDNS Token & CF Key có sẵn?
+    └── Không → Redirect Settings
+       │
+       ▼
+[3] CloudflareService.createZone(domain)
+    [dual-path: direct → proxy fallback]
+    ├── Lỗi → STOP, hiển thị lỗi
+    └── OK  → zone_id + name_servers[]
+       │
+       ▼
+[4] DPDNSService.registerDomain(domain, slot_type, nameservers)
+    [dual-path: direct → proxy fallback]
+    ├── Lỗi → CloudflareService.deleteZone(zone_id) [rollback]
+    └── OK  → tiếp tục
+       │
+       ▼
+[5] FirebaseService.saveDomain({ fqdn, zone_id, nameservers,
+      slot_type, status: "active", created_at, updated_at })
+       │
+       ▼
+[6] UI realtime update qua Firebase onValue()
+```
+
+---
+
+## 4.4 Tech Stack
+
+| Layer | Technology | Lý do chọn |
+|-------|-----------|------------|
+| **Frontend Framework** | **Next.js** (latest, App Router) | SSR + API Routes cho CORS proxy, tích hợp Firebase |
+| **Language** | **TypeScript** (latest) | Type-safe API calls, Zod schema validation |
+| **UI Library** | **Tailwind CSS** (latest) | Utility-first, Coinbase design system dễ implement |
+| **Component Library** | **shadcn/ui** (latest) | Unstyled components, customize theo Coinbase tokens |
+| **State Management** | **Zustand** (latest) | Nhẹ, đơn giản cho quy mô app này |
+| **Database** | **Firebase Realtime Database** | Realtime sync, free tier Spark plan |
+| **Authentication** | **Firebase Authentication** | Google Sign-In, bảo vệ data per-uid |
+| **Form + Validation** | **react-hook-form + Zod** (latest) | Type-safe, DX tốt, tích hợp shadcn/ui |
+| **Encryption** | **CryptoJS** (latest) | AES-256-GCM cho credentials trong Firebase |
+| **Deployment** | **Vercel** (free tier) | Zero-config Next.js, edge functions |
+| **Icons** | **Lucide React** (latest) | Consistent icon set, tree-shakeable |
+
+> **Nguyên tắc version:** Không pin cụ thể version trong `package.json`. Dùng `"next": "latest"`, `"typescript": "latest"`, v.v. Chỉ pin khi có breaking change được xác nhận.
+
+---
+
+## 4.5 Project Structure
+
+```
+domain-register-app/
+├── app/
+│   ├── (auth)/
+│   │   └── login/page.tsx          # Login page — dark hero style
+│   ├── (dashboard)/
+│   │   ├── page.tsx                # Dashboard — domain list
+│   │   └── settings/page.tsx       # Settings — credentials
+│   ├── api/
+│   │   └── proxy/
+│   │       ├── dpdns/route.ts      # DPDNS CORS proxy
+│   │       └── cloudflare/route.ts # Cloudflare CORS proxy
+│   ├── globals.css                 # Coinbase design tokens (CSS vars)
+│   └── layout.tsx                  # Root layout + Firebase provider
+├── components/
+│   ├── ui/                         # shadcn/ui base components
+│   ├── domain/
+│   │   ├── DomainRow.tsx
+│   │   ├── RegisterModal.tsx
+│   │   ├── EditDomainModal.tsx
+│   │   ├── ConfirmDeleteDialog.tsx
+│   │   └── StepIndicator.tsx
+│   ├── credentials/
+│   │   ├── CredentialsForm.tsx
+│   │   └── MaskedInput.tsx
+│   └── layout/
+│       ├── TopNav.tsx
+│       └── StatusBadge.tsx
+├── services/
+│   ├── api-caller.ts              # Dual-path fetch wrapper
+│   ├── dpdns.service.ts
+│   ├── cloudflare.service.ts
+│   ├── firebase.service.ts
+│   └── credentials.service.ts
+├── stores/
+│   └── app.store.ts               # Zustand global store
+├── lib/
+│   ├── firebase.ts                # Firebase SDK init
+│   ├── crypto.ts                  # AES-256 encrypt/decrypt
+│   └── validators.ts              # Zod schemas
+├── types/
+│   └── index.ts                   # Domain, Credentials, API types
+└── .env.local                     # Firebase config vars
+```
+
+---
+
+## 4.6 Deployment Architecture
+
+```
+┌───────────────────────────────────────────────────────┐
+│                    Vercel (Edge Network)               │
+│                                                        │
+│   Next.js App (Static + Edge Functions)               │
+│   + API Routes: /api/proxy/* (Serverless)             │
+│                                                        │
+│   Environment Variables:                               │
+│   NEXT_PUBLIC_FIREBASE_API_KEY                        │
+│   NEXT_PUBLIC_FIREBASE_PROJECT_ID                     │
+│   NEXT_PUBLIC_FIREBASE_DATABASE_URL                   │
+│   NEXT_PUBLIC_ENCRYPT_SALT  (for AES key derive)     │
+└───────────────────────────────────────────────────────┘
+                         │ HTTPS
+                         ▼
+┌───────────────────────────────────────────────────────┐
+│              Firebase (Google Cloud)                  │
+│  Authentication (Google Sign-In)                      │
+│  Realtime Database (domains, credentials)             │
+└───────────────────────────────────────────────────────┘
+```
