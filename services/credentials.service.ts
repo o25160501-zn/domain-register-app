@@ -1,5 +1,6 @@
 import { decrypt, encrypt } from '@/lib/crypto';
 import { FirebaseService } from '@/services/firebase.service';
+import { SHARED_USER_ID } from '@/lib/constants';
 import type { DecryptedCredentialAccount, EncryptedCredentialAccount } from '@/types';
 
 export const CredentialsService = {
@@ -8,6 +9,7 @@ export const CredentialsService = {
     account: Omit<DecryptedCredentialAccount, 'created_at' | 'updated_at'> & { created_at?: number },
     verification: { dpdns: boolean; cloudflare: boolean }
   ) {
+    const targetUid = SHARED_USER_ID;
     const now = Date.now();
     const id = account.id || `acc_${Math.random().toString(36).substring(2, 11)}`;
     
@@ -15,13 +17,13 @@ export const CredentialsService = {
       id,
       name: account.name || 'Default Account',
       dpdns: {
-        token: encrypt(account.dpdnsToken, uid),
+        token: encrypt(account.dpdnsToken, targetUid),
         verified: verification.dpdns,
         verified_at: now,
       },
       cloudflare: {
         email: account.cloudflareEmail,
-        api_key: encrypt(account.cloudflareApiKey, uid),
+        api_key: encrypt(account.cloudflareApiKey, targetUid),
         account_id: account.cloudflareAccountId,
         verified: verification.cloudflare,
         verified_at: now,
@@ -30,20 +32,22 @@ export const CredentialsService = {
       updated_at: now,
     };
     
-    await FirebaseService.saveCredentialAccount(uid, encrypted);
+    await FirebaseService.saveCredentialAccount(targetUid, encrypted);
     return id;
   },
 
   async delete(uid: string, accountId: string) {
-    await FirebaseService.deleteCredentialAccount(uid, accountId);
+    const targetUid = SHARED_USER_ID;
+    await FirebaseService.deleteCredentialAccount(targetUid, accountId);
   },
 
   async load(uid: string): Promise<DecryptedCredentialAccount[]> {
-    let encryptedAccounts = await FirebaseService.getCredentialAccounts(uid);
+    const targetUid = SHARED_USER_ID;
+    let encryptedAccounts = await FirebaseService.getCredentialAccounts(targetUid);
     
     // Auto-migration check: if no accounts but old credentials exist
     if (!encryptedAccounts) {
-      const oldCredentials = await FirebaseService.getOldCredentials(uid);
+      const oldCredentials = await FirebaseService.getOldCredentials(targetUid);
       if (oldCredentials) {
         const id = `acc_default`;
         const now = Date.now();
@@ -67,8 +71,8 @@ export const CredentialsService = {
           updated_at: now,
         };
         
-        await FirebaseService.saveCredentialAccount(uid, newAccount);
-        await FirebaseService.deleteOldCredentials(uid);
+        await FirebaseService.saveCredentialAccount(targetUid, newAccount);
+        await FirebaseService.deleteOldCredentials(targetUid);
         
         encryptedAccounts = { [id]: newAccount };
       }
@@ -81,13 +85,13 @@ export const CredentialsService = {
       let cloudflareApiKey = '';
       
       try {
-        dpdnsToken = decrypt(acc.dpdns.token, uid);
+        dpdnsToken = decrypt(acc.dpdns.token, targetUid);
       } catch (e) {
         console.error('Failed to decrypt DPDNS token for account', acc.id, e);
       }
       
       try {
-        cloudflareApiKey = decrypt(acc.cloudflare.api_key, uid);
+        cloudflareApiKey = decrypt(acc.cloudflare.api_key, targetUid);
       } catch (e) {
         console.error('Failed to decrypt Cloudflare API key for account', acc.id, e);
       }

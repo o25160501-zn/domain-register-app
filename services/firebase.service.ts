@@ -1,17 +1,18 @@
 import { get, onValue, ref as dbRef, remove, set, update, type Unsubscribe } from 'firebase/database';
 import { db } from '@/lib/firebase';
 import { toFirebaseKey } from '@/lib/firebase-key';
+import { SHARED_USER_ID } from '@/lib/constants';
 import type { DomainRecord, EncryptedCredentialAccount } from '@/types';
 
 export const FirebaseService = {
   async saveDomain(uid: string, domain: DomainRecord): Promise<void> {
     const key = toFirebaseKey(domain.fqdn);
-    const ref = dbRef(db, `users/${uid}/domains/${key}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/domains/${key}`);
     await set(ref, domain);
   },
 
   subscribeDomains(uid: string, callback: (domains: DomainRecord[]) => void): Unsubscribe {
-    const ref = dbRef(db, `users/${uid}/domains`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/domains`);
     return onValue(ref, (snapshot) => {
       const data = snapshot.val() as Record<string, DomainRecord> | null;
       const domains = data
@@ -27,48 +28,48 @@ export const FirebaseService = {
 
   async deleteDomain(uid: string, fqdn: string): Promise<void> {
     const key = toFirebaseKey(fqdn);
-    const ref = dbRef(db, `users/${uid}/domains/${key}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/domains/${key}`);
     await remove(ref);
   },
 
   async updateDomain(uid: string, fqdn: string, updates: Partial<DomainRecord>): Promise<void> {
     const key = toFirebaseKey(fqdn);
-    const ref = dbRef(db, `users/${uid}/domains/${key}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/domains/${key}`);
     await update(ref, { ...updates, updated_at: Date.now() });
   },
 
   async saveCredentialAccount(uid: string, account: EncryptedCredentialAccount): Promise<void> {
-    const ref = dbRef(db, `users/${uid}/settings/accounts/${account.id}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/settings/accounts/${account.id}`);
     await set(ref, account);
-    await update(dbRef(db, `users/${uid}/settings`), { updated_at: Date.now() });
+    await update(dbRef(db, `users/${SHARED_USER_ID}/settings`), { updated_at: Date.now() });
   },
 
   async deleteCredentialAccount(uid: string, accountId: string): Promise<void> {
-    const ref = dbRef(db, `users/${uid}/settings/accounts/${accountId}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/settings/accounts/${accountId}`);
     await remove(ref);
-    await update(dbRef(db, `users/${uid}/settings`), { updated_at: Date.now() });
+    await update(dbRef(db, `users/${SHARED_USER_ID}/settings`), { updated_at: Date.now() });
   },
 
   async getCredentialAccounts(uid: string): Promise<Record<string, EncryptedCredentialAccount> | null> {
-    const ref = dbRef(db, `users/${uid}/settings/accounts`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/settings/accounts`);
     const snap = await get(ref);
     return snap.val() as Record<string, EncryptedCredentialAccount> | null;
   },
 
   async getOldCredentials(uid: string): Promise<any | null> {
-    const ref = dbRef(db, `users/${uid}/settings/credentials`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/settings/credentials`);
     const snap = await get(ref);
     return snap.val();
   },
 
   async deleteOldCredentials(uid: string): Promise<void> {
-    const ref = dbRef(db, `users/${uid}/settings/credentials`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/settings/credentials`);
     await remove(ref);
   },
 
   async saveDiagnosticAsset(uid: string, type: string, asset: Omit<DiagnosticAsset, 'id' | 'saved_at'> & { id?: string }): Promise<string> {
     const id = asset.id || `ast_${Math.random().toString(36).substring(2, 11)}`;
-    const ref = dbRef(db, `users/${uid}/diagnostic_assets/${type}/${id}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/diagnostic_assets/${type}/${id}`);
     const data = {
       ...asset,
       id,
@@ -79,7 +80,7 @@ export const FirebaseService = {
   },
 
   subscribeDiagnosticAssets(uid: string, callback: (assets: DiagnosticAsset[]) => void): Unsubscribe {
-    const ref = dbRef(db, `users/${uid}/diagnostic_assets`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/diagnostic_assets`);
     return onValue(ref, (snapshot) => {
       const data = snapshot.val() as Record<string, Record<string, DiagnosticAsset>> | null;
       const assets: DiagnosticAsset[] = [];
@@ -101,7 +102,7 @@ export const FirebaseService = {
   },
 
   async deleteDiagnosticAsset(uid: string, type: string, assetId: string): Promise<void> {
-    const ref = dbRef(db, `users/${uid}/diagnostic_assets/${type}/${assetId}`);
+    const ref = dbRef(db, `users/${SHARED_USER_ID}/diagnostic_assets/${type}/${assetId}`);
     await remove(ref);
   },
 };

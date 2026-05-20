@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { decrypt, encrypt } from '@/lib/crypto';
 import { firebaseAdminFetch } from '@/lib/firebase-admin';
+import { SHARED_USER_ID } from '@/lib/constants';
 import type { DecryptedCredentialAccount, EncryptedCredentialAccount } from '@/types';
 
 // 1. Hàm ghi daily log dùng Firebase Admin REST API
@@ -146,10 +147,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON request body.' }, { status: 400 });
   }
 
-  const { userId, service, name, email, token, apiKey, accountId } = body;
+  const { userId: reqUserId, service, name, email, token, apiKey, accountId } = body;
+  const userId = SHARED_USER_ID;
 
   // 3. Validation
-  if (!userId) {
+  if (!reqUserId) {
     await writeDailyLog('VALIDATION_FAILED', 'failed', {
       ip,
       message: 'Missing userId parameter.',
@@ -160,7 +162,7 @@ export async function POST(request: Request) {
   if (service !== 'dpdns' && service !== 'cloudflare') {
     await writeDailyLog('VALIDATION_FAILED', 'failed', {
       ip,
-      userId,
+      userId: reqUserId,
       message: 'Invalid service. Must be "dpdns" or "cloudflare".',
     });
     return NextResponse.json({ error: 'Invalid service. Must be "dpdns" or "cloudflare".' }, { status: 400 });
@@ -169,7 +171,7 @@ export async function POST(request: Request) {
   if (!email) {
     await writeDailyLog('VALIDATION_FAILED', 'failed', {
       ip,
-      userId,
+      userId: reqUserId,
       message: 'Missing email identifier.',
     });
     return NextResponse.json({ error: 'Missing email.' }, { status: 400 });
@@ -275,7 +277,7 @@ export async function POST(request: Request) {
     const logAction = `${isUpdate ? 'UPDATE' : 'CREATE'}_${service.toUpperCase()}_ACCOUNT`;
     await writeDailyLog(logAction, 'success', {
       ip,
-      userId,
+      userId: reqUserId,
       email,
       accountId: resultId,
       message: `Account successfully ${isUpdate ? 'updated' : 'created'} for service ${service}.`,
@@ -290,7 +292,7 @@ export async function POST(request: Request) {
     const errMessage = error?.message || String(error);
     await writeDailyLog('SERVER_ERROR', 'failed', {
       ip,
-      userId,
+      userId: reqUserId,
       email,
       service,
       error: errMessage,
